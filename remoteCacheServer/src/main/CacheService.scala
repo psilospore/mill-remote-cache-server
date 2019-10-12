@@ -1,14 +1,18 @@
 package main
 
-import cats.Monad
-import cats.effect.{ConcurrentEffect, ContextShift, IO}
-import com.amazonaws.services.s3.model.{ObjectMetadata, PutObjectRequest}
-import com.amazonaws.client.builder.AwsClientBuilder
-import com.amazonaws.services.s3.{AmazonS3, AmazonS3ClientBuilder}
-import com.amazonaws.auth.{AWSStaticCredentialsProvider, BasicAWSCredentials}
+import argonaut._
+import cats.data.NonEmptyList
+import cats.effect.{Blocker, ConcurrentEffect, ContextShift, IO}
 import cats.syntax.apply._
+import com.amazonaws.auth.{AWSStaticCredentialsProvider, BasicAWSCredentials}
+import com.amazonaws.services.s3.model.{ObjectMetadata, PutObjectRequest, S3ObjectInputStream, S3ObjectSummary}
+import com.amazonaws.services.s3.{AmazonS3, AmazonS3ClientBuilder}
+import org.http4s.argonaut._
 
+import scala.collection.JavaConverters._
+import scala.concurrent.ExecutionContext
 import scala.util.Try
+
 
 /**
  * TODO
@@ -16,23 +20,60 @@ import scala.util.Try
  * - other caching implementations GoogleCloudCacheService, LocalCacheService, etc
  */
 
+import main.CacheService._
 
 trait CacheService[F[_]] {
-  type PathFrom = String
-  type Hash = Int
 
-  case class Cached(hashesAvailable: Map[PathFrom, Set[Hash]])
+  //TODO Either
+  def upload(pathFrom: PathFrom, hashCode: Hash, stream: fs2.Stream[F, Byte]): F[Boolean]
 
-  def upload(pathFrom: PathFrom, hashCode: Hash, stream: fs2.Stream[IO, Byte]): F[Boolean]
+  def get(pathFrom: PathFrom, hashCode: Hash): fs2.Stream[F, Byte]
 
   def cached(): F[Cached]
 }
 
+object CacheService {
+  type PathFrom = String
+  type Hash = Int
+  type ErrorOr[V] = Either[NonEmptyList[String], V] //TODO use this
+  type ErrorOrUnit = ErrorOr[Unit]
+
+  case class Cached(hashesAvailable: Map[PathFrom, List[Hash]])
+
+  implicit val cachedJsonEncoder = CodecJson.casecodec1(Cached.apply, Cached.unapply)("hashesAvailable").Encoder
+  implicit val cachedEntityEncoder = jsonEncoderOf[IO, Cached]
+}
+
 class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs: ContextShift[IO]) extends CacheService[IO] {
+
   import AmazonCacheService._
 
-  //TODO just storing this in a mutable variable for now. For S3 we would just get all keys in bucket and populate.
-  var cached = Cached(Map())
+  //  def initialize(): IO[ErrorOr[Unit]] = TODO create bucket if doesn't exist
+
+  override def cached(): IO[Cached] = {
+    IO.shift *> IO {
+      val res = client.listObjects(BUCKETNAME)
+      println(s"S3 Response: $res")
+      val objects: List[S3ObjectSummary] = res.getObjectSummaries().asScala.toList
+      Cached(
+        objects.map(_.getKey.split("-").toList match {
+          case pathL :+ hash => (pathL.mkString("/"), hash)
+        }).groupMap(_._1)(_._2.toInt)
+      )
+
+
+    }
+  }
+
+  override def get(pathFrom: PathFrom, hashCode: Hash): fs2.Stream[IO, Byte] = {
+    val objectContentIO: IO[S3ObjectInputStream] = IO.shift *> IO {
+      val res = client.getObject(BUCKETNAME, s"$pathFrom/$hashCode") //TODO use ErrorOr in case of failure
+      println(s"Successfully fetched $pathFrom/$hashCode")
+      println(s"S3 Response: $res")
+      res.getObjectContent
+    }
+    fs2.io.readInputStream[IO](objectContentIO, 1000, Blocker.liftExecutionContext(ExecutionContext.global))
+  }
 
   override def upload(pathFrom: PathFrom, hashCode: Hash, stream: fs2.Stream[IO, Byte]): IO[Boolean] = {
     fs2.io.toInputStreamResource(stream).use(s => {
@@ -54,12 +95,11 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
         } isSuccess
       }
     })
-
   }
 }
 
 object AmazonCacheService {
-  //TODO for now just storing this. For S3 we would just get all keys in bucket and populate.
+  val BUCKETNAME = "millcache" //TODO config
 
   def createClient: IO[AmazonS3] = {
     IO { //TODO read from config
