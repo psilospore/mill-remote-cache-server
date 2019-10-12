@@ -1,10 +1,8 @@
 # Mill Remote Cache Server
 
-Just a simple remote caching server for now.
+Just a simple remote caching server for now used as a proposal.
 Supports get and put requests for anything hashable in the mill out cache.
 References in meta.json are expected to be relative.
-
-The mill tool has Tasks and some of the outputs have a hash associated with it.
 
 ## WIP Endpoints
 
@@ -13,12 +11,13 @@ PUT /cache/[pathFromOut]/[hash]
     Attach zip
 GET /cache/[pathFromOut]/[hash]
     Responds with zip
-GET /allCached
+GET /cached
     Responds with JSON of all pathFromOut and hashes
 ```
 
 ## Example
 
+The mill tool has Tasks and some of the outputs have a hash associated with it.
 A simple scala module that prints HelloWorld may have the following structure.
 
 ```
@@ -34,7 +33,7 @@ out/
 ```
 
 The first time we run mill locally we attempt to call
-`GET /allCached` and receive an empty response since nothing has been cached yet.
+`GET /cached` and receive an empty response since nothing has been cached yet.
 
 
 After mill finishes we zip `compile` and `allSources` because they both contain an input hash as shown above.
@@ -56,7 +55,7 @@ out/
         ...
 ```
 
-When another person checks out your project and runs `mill helloWorld` mill will call `GET /allCached`
+When another person checks out your project and runs `mill helloWorld` mill will call `GET /cached`
 and receive something like `[{pathFromOut: "helloWorld/allSources", hash: 1}, {pathFromOut: "helloWorld/compile", hash: 2}]`
 and then when mill sees that it needs to create helloWorld/allSources and it calculates an input hash of 1.
 Then it will see that it is in the remote cache and call `GET /cache/allSources/1` move the contents to `out/helloWorld/allSources/`.
