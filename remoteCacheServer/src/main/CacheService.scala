@@ -11,7 +11,8 @@ import org.http4s.argonaut._
 
 import scala.collection.JavaConverters._
 import scala.concurrent.ExecutionContext
-import scala.util.Try
+import scala.io.Source
+import scala.util.{Failure, Try}
 
 
 /**
@@ -67,8 +68,8 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
 
   override def get(pathFrom: PathFrom, hashCode: Hash): fs2.Stream[IO, Byte] = {
     val objectContentIO: IO[S3ObjectInputStream] = IO.shift *> IO {
-      val res = client.getObject(BUCKETNAME, s"$pathFrom/$hashCode") //TODO use ErrorOr in case of failure
-      println(s"Successfully fetched $pathFrom/$hashCode")
+      val res = client.getObject(BUCKETNAME, s"$pathFrom-$hashCode") //TODO use ErrorOr in case of failure
+      println(s"Successfully fetched $pathFrom-$hashCode")
       println(s"S3 Response: $res")
       res.getObjectContent
     }
@@ -76,21 +77,29 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
   }
 
   override def upload(pathFrom: PathFrom, hashCode: Hash, stream: fs2.Stream[IO, Byte]): IO[Boolean] = {
+    IO.shift *> IO {
+      Try {
+        val res = client.doesObjectExist(BUCKETNAME, s"$pathFrom-$hashCode")
+        println(s"Successfully uploaded $pathFrom-$hashCode")
+        println(s"S3 Response: $res")
+      } isSuccess
+    }
     fs2.io.toInputStreamResource(stream).use(s => {
       val o = new ObjectMetadata()
       o.setContentEncoding("gzip")
       o.setContentLength(o.getContentLength)
       val putObjectRequest = new PutObjectRequest(
         "cache",
-        s"pathFrom/$hashCode",
+        s"pathFrom-$hashCode",
         s,
         o
       )
 
       IO.shift *> IO {
         Try {
+
           val res = client.putObject(putObjectRequest)
-          println(s"Successfully uploaded $pathFrom/$hashCode")
+          println(s"Successfully uploaded $pathFrom-$hashCode")
           println(s"S3 Response: $res")
         } isSuccess
       }
@@ -99,13 +108,24 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
 }
 
 object AmazonCacheService {
-  val BUCKETNAME = "millcache" //TODO config
+  val BUCKETNAME = "millcache" //TODO get from config config
 
-  def createClient: IO[AmazonS3] = {
-    IO { //TODO read from config
-      val credentials = new AWSStaticCredentialsProvider(new BasicAWSCredentials("TODO", "TODO"))
-      AmazonS3ClientBuilder.standard().withRegion("us-east-1").withCredentials(credentials).build()
+  def createClient: IO[AmazonS3] = { //TODO make this better also config
+    IO(Source.fromFile(s"${System.getProperty("user.home")}/.aws/credentials")).bracket { source =>
+      IO({
+        val lines: List[String] = source.getLines().toList
+        val keyRegex = "aws_access_key_id = (.*)".r
+        val secretRegex = "aws_secret_access_key = (.*)".r
+        val credentials = lines match {
+          case _ :: keyRegex(k) :: secretRegex(s) :: Nil => println(k, s);new AWSStaticCredentialsProvider(new BasicAWSCredentials(k, s))
+        }
+        AmazonS3ClientBuilder.standard().withRegion("us-east-1").withCredentials(credentials).build()
+      })
+    } { source =>
+      // Releasing the reader (the finally block)
+      IO(source.close())
     }
+
   }
 
 }

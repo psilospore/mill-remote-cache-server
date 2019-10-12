@@ -13,7 +13,7 @@ import org.http4s.server.middleware._
 import org.http4s.argonaut._
 
 
-class Server extends IOApp {
+object Server extends IOApp {
   object HashMatcher extends QueryParamDecoderMatcher[Int]("hash")
 
   override def run(args: List[String]): IO[ExitCode] = {
