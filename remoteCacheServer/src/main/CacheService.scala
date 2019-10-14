@@ -77,13 +77,6 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
   }
 
   override def upload(pathFrom: PathFrom, hashCode: Hash, stream: fs2.Stream[IO, Byte]): IO[Boolean] = {
-    IO.shift *> IO {
-      Try {
-        val res = client.doesObjectExist(BUCKETNAME, s"$pathFrom-$hashCode")
-        println(s"Successfully uploaded $pathFrom-$hashCode")
-        println(s"S3 Response: $res")
-      } isSuccess
-    }
     fs2.io.toInputStreamResource(stream).use(s => {
       val o = new ObjectMetadata()
       o.setContentEncoding("gzip")
@@ -97,8 +90,7 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
 
       IO.shift *> IO {
         Try {
-
-          val res = client.putObject(putObjectRequest)
+          val res = client.putObject(putObjectRequest) //It would probably be rare to override something but we could check first
           println(s"Successfully uploaded $pathFrom-$hashCode")
           println(s"S3 Response: $res")
         } isSuccess
@@ -128,5 +120,23 @@ object AmazonCacheService {
 
   }
 
+}
+
+//Just print requests I'm getting
+object PrintDebugCacheService extends CacheService[IO] {
+  override def upload(pathFrom: PathFrom, hashCode: Hash, stream: fs2.Stream[IO, Byte]): IO[Boolean] = {
+    println(s"PUT request received for $pathFrom hash $hashCode")
+    stream.take(40).compile.toList.map(println).map({_ => true})
+  }
+
+  override def get(pathFrom: PathFrom, hashCode: Hash): fs2.Stream[IO, Byte] = {
+    println(s"GET request received for $pathFrom hash $hashCode")
+    fs2.Stream.apply[IO, Byte]()
+  }
+
+  override def cached(): IO[Cached] = {
+    println(s"Get cached request received")
+    IO.pure(Cached(Map()))
+  }
 }
 

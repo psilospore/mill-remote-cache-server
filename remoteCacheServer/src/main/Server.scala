@@ -17,7 +17,9 @@ object Server extends IOApp {
   object HashMatcher extends QueryParamDecoderMatcher[Int]("hash")
 
   override def run(args: List[String]): IO[ExitCode] = {
-    getDefaultCacheService.flatMap(cacheService => {
+    val cacheService = PrintDebugCacheService
+//    getDefaultCacheService
+//      .flatMap(cacheService => {
       val routes = HttpRoutes.of[IO] {
         case GET -> Root / "cached" => Ok(
           cacheService.cached()
@@ -31,14 +33,15 @@ object Server extends IOApp {
       } orNotFound
 
       BlazeServerBuilder[IO]
-        .bindHttp(8080, "localhost")
+        .bindHttp(7000, "localhost")
         .withHttpApp(routes)
         .serve
         .compile
         .drain
         .as(ExitCode.Success)
-    })
-  }
+    }
+//  )
+//  }
 
   //TODO do something else
   def getDefaultCacheService: IO[CacheService[IO]] = AmazonCacheService.createClient.map(new AmazonCacheService(_))

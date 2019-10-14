@@ -7,9 +7,9 @@ References in meta.json are expected to be relative.
 ## WIP Endpoints
 
 ```
-PUT /cache/[pathFromOut]/[hash]
+PUT /cache/[pathFromOut]?hash=[hash]
     Attach zip
-GET /cache/[pathFromOut]/[hash]
+GET /cache/[pathFromOut]?hash=[hash]
     Responds with zip
 GET /cached
     Responds with JSON of all pathFromOut and hashes
@@ -37,26 +37,22 @@ The first time we run mill locally we attempt to call
 
 
 After mill finishes we zip `compile` and `allSources` because they both contain an input hash as shown above.
-Then the following is uploaded `PUT /cache/allSources/1` and `PUT /cache/compile/2`.
+Then the following is uploaded `PUT /cache/allSources?hash=1` and `PUT /cache/compile?hash=2`.
 
-S3 will have a similar structure to out but anything hashable will be used as a directory.
+The caching server could handle storage using different providers such as S3 or Google Cloud Storage. This is one prototype of a caching server.
+
+## Implementation
+So far I have an S3 based implementation that a similar structure to out but anything hashable will be used as a key.
 
 ```
-out/
-    helloWorld/
-        allSources/
-            1/
-                meta.json (has reference to source and an input hash 1)
-        ...
-        compile/
-            2/
-                dest/classes/HelloWorld.class
-                meta.json (has reference to above .class file and an input hash 2)
-        ...
+helloWorld/allSources-1 => tar.gz of allSources with meta.json containing relative paths
+    ...
+helloWorld/compile-2 => tar.gz of compile with meta.json containing relative paths.
+    ...
 ```
 
 When another person checks out your project and runs `mill helloWorld` mill will call `GET /cached`
 and receive something like `[{pathFromOut: "helloWorld/allSources", hash: 1}, {pathFromOut: "helloWorld/compile", hash: 2}]`
 and then when mill sees that it needs to create helloWorld/allSources and it calculates an input hash of 1.
-Then it will see that it is in the remote cache and call `GET /cache/allSources/1` move the contents to `out/helloWorld/allSources/`.
+Then it will see that it is in the remote cache and call `GET /cache/allSources?hash=1` move the contents to `out/helloWorld/allSources/`.
 
