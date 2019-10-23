@@ -1,5 +1,7 @@
 package main
 
+import java.io.ByteArrayInputStream
+
 import argonaut._
 import cats.data.NonEmptyList
 import cats.effect.{Blocker, ConcurrentEffect, ContextShift, IO}
@@ -14,17 +16,16 @@ import scala.concurrent.ExecutionContext
 import scala.io.Source
 import scala.util.{Failure, Try}
 
-
 /**
  * TODO
  * - configs
  * - other caching implementations GoogleCloudCacheService, LocalCacheService, etc
+ * - combine caching
  */
 
 import main.CacheService._
 
 trait CacheService[F[_]] {
-
   //TODO Either
   def upload(pathFrom: PathFrom, hashCode: Hash, stream: fs2.Stream[F, Byte]): F[Boolean]
 
@@ -41,8 +42,10 @@ object CacheService {
 
   case class Cached(hashesAvailable: Map[PathFrom, List[Hash]])
 
-  implicit val cachedJsonEncoder = CodecJson.casecodec1(Cached.apply, Cached.unapply)("hashesAvailable").Encoder
+  implicit val cachedJsonCodec = CodecJson.casecodec1(Cached.apply, Cached.unapply)("hashesAvailable")
   implicit val cachedEntityEncoder = jsonEncoderOf[IO, Cached]
+  implicit val cachedEntityDecoder = jsonOf[IO, Cached]
+
 }
 
 class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs: ContextShift[IO]) extends CacheService[IO] {
@@ -54,14 +57,14 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
   override def cached(): IO[Cached] = {
     IO.shift *> IO {
       val res = client.listObjects(BUCKETNAME)
-      println(s"S3 Response: $res")
-      val objects: List[S3ObjectSummary] = res.getObjectSummaries().asScala.toList
-      Cached(
+      val objects: List[S3ObjectSummary] = res.getObjectSummaries.asScala.toList
+      val cached1 = Cached(
         objects.map(_.getKey.split("-").toList match {
-          case pathL :+ hash => (pathL.mkString("/"), hash)
+          case pathL :+ hash => (pathL.mkString("-"), hash)
         }).groupMap(_._1)(_._2.toInt)
       )
-
+      println(cached1)
+      cached1
 
     }
   }
@@ -77,23 +80,30 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
   }
 
   override def upload(pathFrom: PathFrom, hashCode: Hash, stream: fs2.Stream[IO, Byte]): IO[Boolean] = {
-    fs2.io.toInputStreamResource(stream).use(s => {
+    //TODO IO.shift ?
+    stream.compile.toVector.map(b => {
       val o = new ObjectMetadata()
       o.setContentEncoding("gzip")
-      o.setContentLength(o.getContentLength)
-      val putObjectRequest = new PutObjectRequest(
-        "cache",
-        s"pathFrom-$hashCode",
-        s,
-        o
-      )
-
-      IO.shift *> IO {
-        Try {
-          val res = client.putObject(putObjectRequest) //It would probably be rare to override something but we could check first
-          println(s"Successfully uploaded $pathFrom-$hashCode")
-          println(s"S3 Response: $res")
-        } isSuccess
+      o.setContentType("application/octet-stream")
+      o.setContentLength(b.size)
+      Try {
+        val putObjectRequest = new PutObjectRequest(
+          BUCKETNAME,
+          s"$pathFrom-$hashCode",
+          new ByteArrayInputStream(b.toArray),
+          o
+        )
+        println("before putobject")
+        val res = Try {
+          client.putObject(putObjectRequest)
+        } //It would probably be rare to override something but we could check first
+        println(s"Successfully uploaded $pathFrom-$hashCode")
+        println(s"S3 Response: $res")
+      } match {
+        case Failure(exception) => {
+          exception.printStackTrace; false
+        }
+        case _ => true
       }
     })
   }
@@ -109,7 +119,7 @@ object AmazonCacheService {
         val keyRegex = "aws_access_key_id = (.*)".r
         val secretRegex = "aws_secret_access_key = (.*)".r
         val credentials = lines match {
-          case _ :: keyRegex(k) :: secretRegex(s) :: Nil => println(k, s);new AWSStaticCredentialsProvider(new BasicAWSCredentials(k, s))
+          case _ :: keyRegex(k) :: secretRegex(s) :: Nil => println(k, s); new AWSStaticCredentialsProvider(new BasicAWSCredentials(k, s))
         }
         AmazonS3ClientBuilder.standard().withRegion("us-east-1").withCredentials(credentials).build()
       })
@@ -117,7 +127,6 @@ object AmazonCacheService {
       // Releasing the reader (the finally block)
       IO(source.close())
     }
-
   }
 
 }
@@ -125,8 +134,8 @@ object AmazonCacheService {
 //Just print requests I'm getting
 object PrintDebugCacheService extends CacheService[IO] {
   override def upload(pathFrom: PathFrom, hashCode: Hash, stream: fs2.Stream[IO, Byte]): IO[Boolean] = {
-    println(s"PUT request received for $pathFrom hash $hashCode")
-    stream.take(40).compile.toList.map(println).map({_ => true})
+    println(s"PUT request received for $pathFrom hash $hashCode stream length")
+    stream.take(40).compile.toList.map(println).map({ _ => true })
   }
 
   override def get(pathFrom: PathFrom, hashCode: Hash): fs2.Stream[IO, Byte] = {

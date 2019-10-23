@@ -12,36 +12,38 @@ import main._
 import org.http4s.server.middleware._
 import org.http4s.argonaut._
 
-
 object Server extends IOApp {
-  object HashMatcher extends QueryParamDecoderMatcher[Int]("hash")
+
+  object HashMatcher extends OptionalQueryParamDecoderMatcher[Int]("hash")
+
+  object PathMatcher extends OptionalQueryParamDecoderMatcher[String]("path")
 
   override def run(args: List[String]): IO[ExitCode] = {
-    val cacheService = PrintDebugCacheService
-//    getDefaultCacheService
-//      .flatMap(cacheService => {
-      val routes = HttpRoutes.of[IO] {
-        case GET -> Root / "cached" => Ok(
-          cacheService.cached()
-        )
-        case GET -> Root / "cached" / pathFrom :? HashMatcher(hash) => Ok(
-          cacheService.get(pathFrom, hash)
-        )
-        case req @ PUT -> Root / "cached" / pathFrom :? HashMatcher(hash) => Ok(
-          cacheService.upload(pathFrom, hash, req.body).void
-        )
-      } orNotFound
+    getDefaultCacheService
+      .flatMap(cacheService => {
+        val routes = HttpRoutes.of[IO] {
+          case GET -> Root / "cached" :? PathMatcher(path) +& HashMatcher(hash) =>
+            (for {
+              p <- path
+              h <- hash
+            } yield Ok(cacheService.get(p, h))) getOrElse Ok(cacheService.cached())
+          case req@PUT -> Root / "cached" :? PathMatcher(path) +& HashMatcher(hash) =>
+            (for {
+              p <- path
+              h <- hash
+            } yield Ok(cacheService.upload(p, h, req.body) void)) getOrElse BadRequest()
+        } orNotFound
 
-      BlazeServerBuilder[IO]
-        .bindHttp(7000, "localhost")
-        .withHttpApp(routes)
-        .serve
-        .compile
-        .drain
-        .as(ExitCode.Success)
-    }
-//  )
-//  }
+        BlazeServerBuilder[IO]
+          .bindHttp(7000, "localhost")
+          .withHttpApp(routes)
+          .serve
+          .compile
+          .drain
+          .as(ExitCode.Success)
+      }
+      )
+  }
 
   //TODO do something else
   def getDefaultCacheService: IO[CacheService[IO]] = AmazonCacheService.createClient.map(new AmazonCacheService(_))
