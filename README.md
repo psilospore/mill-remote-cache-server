@@ -7,9 +7,9 @@ References in meta.json are expected to be relative.
 ## WIP Endpoints
 
 ```
-PUT /cache/[pathFromOut]?hash=[hash]
+PUT /cached?path=[pathFromOut]?hash=[hash]
     Attach zip
-GET /cache/[pathFromOut]?hash=[hash]
+GET /cached/?path=[pathFromOut]?hash=[hash]
     Responds with zip
 GET /cached
     Responds with JSON of all pathFromOut and hashes
@@ -43,11 +43,12 @@ The caching server could handle storage using different providers such as S3 or 
 
 ## Implementation
 So far I have an S3 based implementation that a similar structure to out but anything hashable will be used as a key.
+Hashes are base32 encoded to handle negative hashes which would otherwise be invalid directories.
 
 ```
-helloWorld/allSources-1 => tar.gz of allSources with meta.json containing relative paths
+helloWorld/allSources/{Base32 of 1} => tar.gz of allSources with meta.json containing relative paths
     ...
-helloWorld/compile-2 => tar.gz of compile with meta.json containing relative paths.
+helloWorld/compile/{Base32 of 2} => tar.gz of compile with meta.json containing relative paths.
     ...
 ```
 
