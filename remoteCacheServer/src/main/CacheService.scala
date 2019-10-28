@@ -55,7 +55,7 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
   //  def initialize(): IO[ErrorOr[Unit]] = TODO if first time ever running: create bucket if doesn't exist with correct permissions
 
   override def cached(): IO[Cached] = {
-    IO.shift *> (IO {
+    IO.shift *> IO {
       val res = client.listObjects(BUCKETNAME)
       val objects: List[S3ObjectSummary] = res.getObjectSummaries.asScala.toList
       val cached1 = Cached(
@@ -66,7 +66,7 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
       println(cached1)
       cached1
 
-    }).redeem(x => {x.printStackTrace(); Cached(Map())} , x => x) //TODO delete
+    }.redeem(x => {x.printStackTrace(); Cached(Map())} , x => x) //TODO delete
   }
 
   override def get(pathFrom: PathFrom, hashCode: Hash): fs2.Stream[IO, Byte] = {
