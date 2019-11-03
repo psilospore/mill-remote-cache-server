@@ -58,22 +58,19 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
     IO.shift *> IO {
       val res = client.listObjects(BUCKETNAME)
       val objects: List[S3ObjectSummary] = res.getObjectSummaries.asScala.toList
-      val cached1 = Cached(
+      Cached(
         objects.map(_.getKey.split("/").toList match {
           case pathL :+ encodedHash => (pathL.mkString("/"), BigInt(Base32.decode(encodedHash)))
         }).groupMap(_._1)(_._2.toInt)
       )
-      println(cached1)
-      cached1
-
-    }.redeem(x => {x.printStackTrace(); Cached(Map())} , x => x) //TODO delete
+    }
   }
 
   override def get(pathFrom: PathFrom, hashCode: Hash): fs2.Stream[IO, Byte] = {
     val objectContentIO: IO[S3ObjectInputStream] = IO.shift *> IO {
       val res = client.getObject(BUCKETNAME, s"$pathFrom/${Base32.encodeAsString(hashCode.toByteArray: _*)}") //TODO use ErrorOr in case of failure
-      println(s"Successfully fetched $pathFrom-$hashCode")
-      println(s"S3 Response: $res")
+//      println(s"Successfully fetched $pathFrom-$hashCode")
+//      println(s"S3 Response: $res")
       res.getObjectContent
     }
     fs2.io.readInputStream[IO](objectContentIO, 1000, Blocker.liftExecutionContext(ExecutionContext.global))
@@ -93,12 +90,11 @@ class AmazonCacheService(client: AmazonS3)(implicit c: ConcurrentEffect[IO], cs:
           new ByteArrayInputStream(b.toArray),
           o
         )
-        println("before putobject")
         val res = Try {
           client.putObject(putObjectRequest)
         } //It would probably be rare to override something but we could check first
-        println(s"Successfully uploaded $pathFrom/$hashCode")
-        println(s"S3 Response: $res")
+//        println(s"Successfully uploaded $pathFrom/$hashCode")
+//        println(s"S3 Response: $res")
       } match {
         case Failure(exception) => {
           exception.printStackTrace;
@@ -125,11 +121,9 @@ object AmazonCacheService {
         AmazonS3ClientBuilder.standard().withRegion("us-east-1").withCredentials(credentials).build()
       })
     } { source =>
-      // Releasing the reader (the finally block)
       IO(source.close())
     }
   }
-
 }
 
 //For printline debugging. Just print requests I'm getting.
